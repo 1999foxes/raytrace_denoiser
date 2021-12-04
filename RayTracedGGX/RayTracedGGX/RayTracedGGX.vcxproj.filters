@@ -1,0 +1,189 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Common">
+      <UniqueIdentifier>{c7dcf06e-3792-45c8-b4b7-d0beb8f691c7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Common\Source Files">
+      <UniqueIdentifier>{4be7925a-b683-465a-a53f-42df43b1e44b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Common\Header Files">
+      <UniqueIdentifier>{f1836231-d177-4e3f-b087-6de0175144e8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{08d07ad3-d2bf-4b6d-98f9-a02af3447f31}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="XUSG">
+      <UniqueIdentifier>{440b6ecd-3e27-4e4a-a2af-c8c7477dacdf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="XUSG\Optional">
+      <UniqueIdentifier>{f5f77362-2600-4645-924b-1913b86dc530}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Denoiser">
+      <UniqueIdentifier>{459ae949-f6f1-483b-bfc0-7fc83ef5572d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Renderer">
+      <UniqueIdentifier>{80ef64d9-0d59-4edb-97fe-7f72cb8aafb0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Postprocess">
+      <UniqueIdentifier>{574dc46a-7acf-457b-a063-078a7a0c553e}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\DXFramework.cpp">
+      <Filter>Common\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\Win32Application.cpp">
+      <Filter>Common\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RayTracedGGX.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Content\RayTracer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="XUSG\Optional\XUSGObjLoader.cpp">
+      <Filter>XUSG\Optional</Filter>
+    </ClCompile>
+    <ClCompile Include="Content\Denoiser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stdafx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\d3dx12.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\DXFramework.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\DXFrameworkHelper.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\Win32Application.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\StepTimer.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RayTracedGGX.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Content\RayTracer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="XUSG\Optional\XUSGObjLoader.h">
+      <Filter>XUSG\Optional</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\d3d12_1.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\D3D12RaytracingFallback.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\D3D12RaytracingHelpers.hpp">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\d3d12video.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Content\Denoiser.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\d3d12.h">
+      <Filter>Common\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="XUSG\Core\XUSG.h">
+      <Filter>XUSG</Filter>
+    </ClInclude>
+    <ClInclude Include="XUSG\Advanced\XUSGDDSLoader.h">
+      <Filter>XUSG</Filter>
+    </ClInclude>
+    <ClInclude Include="XUSG\RayTracing\XUSGRayTracing.h">
+      <Filter>XUSG</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="Content\Shaders\PSGBuffer.hlsl">
+      <Filter>Shaders\Renderer</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\VSBasePass.hlsl">
+      <Filter>Shaders\Renderer</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\PSToneMap.hlsl">
+      <Filter>Shaders\Postprocess</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\VSScreenQuad.hlsl">
+      <Filter>Shaders\Postprocess</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSTemporalSS.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_H_Refl.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_H_Refl_S.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_V_Refl.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_V_Refl_S.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\VSDepth.hlsl">
+      <Filter>Shaders\Renderer</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_H_Diff.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_V_Diff.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_H_Diff_S.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+    <FxCompile Include="Content\Shaders\CSSpatial_V_Diff_S.hlsl">
+      <Filter>Shaders\Denoiser</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Content\Shaders\BRDFModels.hlsli">
+      <Filter>Shaders\Renderer</Filter>
+    </None>
+    <None Include="Content\Shaders\Material.hlsli">
+      <Filter>Shaders\Renderer</Filter>
+    </None>
+    <None Include="Content\Shaders\FilterCommon.hlsli">
+      <Filter>Shaders\Denoiser</Filter>
+    </None>
+    <None Include="Content\Shaders\SpatialFilter.hlsli">
+      <Filter>Shaders\Denoiser</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="Content\Shaders\RayTracing.hlsl">
+      <Filter>Shaders\Renderer</Filter>
+    </CustomBuild>
+  </ItemGroup>
+</Project>
