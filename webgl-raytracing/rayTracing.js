@@ -31,23 +31,28 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 // vertex shader for drawing a textured quad
-var renderVertexSource =
-' attribute vec3 vertex;' +
-' varying vec2 texCoord;' +
-' void main() {' +
-'   texCoord = vertex.xy * 0.5 + 0.5;' +
-'   gl_Position = vec4(vertex, 1.0);' +
-' }';
+var renderVertexSource = 
+`#version 300 es
+in vec3 vertex; 
+out vec2 texCoord; 
+void main() {
+    texCoord = vertex.xy * 0.5 + 0.5;
+    gl_Position = vec4(vertex, 1.0);
+}`;
 
 // fragment shader for drawing a textured quad
 var renderFragmentSource =
-' precision highp float;' +
-' varying vec2 texCoord;' +
-' uniform sampler2D texture;' +
-' void main() {' +
-'   vec4 color = texture2D(texture, texCoord);' +
-'   gl_FragColor = vec4(color * color.w);' +
-' }';
+`#version 300 es
+precision highp float;
+out vec4 fragColor;
+in vec2 texCoord; 
+uniform sampler2D colorTexture; 
+uniform sampler2D gBufferTexture; 
+void main() {
+    vec4 color = texture(colorTexture, texCoord);
+    vec4 gBuffer = texture(gBufferTexture, texCoord);
+    fragColor = color * gBuffer.x;
+}`;
 
 
 // vertex shader for drawing a line
@@ -670,11 +675,14 @@ function PathTracer() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 512, 512, 0, gl.RGB, type, null);
   }
 
-  this.gBufferTexture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTexture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 512, 512, 0, gl.RGB, type, null);
+  this.gBufferTextures = [];
+  for (var i = 0; i < 2; i++) {
+    this.gBufferTextures.push(gl.createTexture());
+    gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[i]);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
+  }
 
   gl.bindTexture(gl.TEXTURE_2D, null);
 
@@ -682,6 +690,12 @@ function PathTracer() {
   this.renderProgram = compileShader(renderVertexSource, renderFragmentSource);
   this.renderVertexAttribute = gl.getAttribLocation(this.renderProgram, 'vertex');
   gl.enableVertexAttribArray(this.renderVertexAttribute);
+  gl.useProgram(this.renderProgram);
+  const colorTextureLoc = gl.getUniformLocation(this.renderProgram, "colorTexture");
+  gl.uniform1i(colorTextureLoc, 0);
+  const gBufferTextureLoc = gl.getUniformLocation(this.renderProgram, "gBufferTexture");
+  gl.uniform1i(gBufferTextureLoc, 1);
+
 
   // objects and shader will be filled in when setObjects() is called
   this.objects = [];
@@ -726,13 +740,14 @@ PathTracer.prototype.update = function(matrix, timeSinceStart) {
   this.sampleIndex %= this.textures.length;
   this.sampleCount++;
   console.log(this.sampleIndex, this.sampleCount);
+  this.gBufferTextures.reverse();
 
   gl.useProgram(this.tracerProgram);
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
 
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[this.sampleIndex], 0);  // path tracing result
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.gBufferTexture, 0);  // normal and depth
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.gBufferTextures[0], 0);  // normal and depth
   gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
 
   gl.vertexAttribPointer(this.tracerVertexAttribute, 2, gl.FLOAT, false, 0, 0);
@@ -743,9 +758,16 @@ PathTracer.prototype.update = function(matrix, timeSinceStart) {
 
 PathTracer.prototype.render = function() {
   gl.useProgram(this.renderProgram);
+
+  gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, this.textures[this.sampleIndex]);
+  
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
+  
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.vertexAttribPointer(this.renderVertexAttribute, 2, gl.FLOAT, false, 0, 0);
+  
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 };
 
@@ -1170,7 +1192,7 @@ window.onload = function() {
     ui.setObjects(makeSphereColumn());
     var start = new Date();
     error.style.zIndex = -1;
-    setInterval(function(){ tick((new Date() - start) * 0.001); }, 1000);
+    setInterval(function(){ tick((new Date() - start) * 0.001); }, 1000 / 1);
   } else {
     error.innerHTML = 'Your browser does not support WebGL.<br>Please see <a href="http://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">Getting a WebGL Implementation</a>.';
   }
