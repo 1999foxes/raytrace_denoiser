@@ -45,8 +45,10 @@ var renderFragmentSource =
 ' varying vec2 texCoord;' +
 ' uniform sampler2D texture;' +
 ' void main() {' +
-'   gl_FragColor = texture2D(texture, texCoord);' +
+'   vec4 color = texture2D(texture, texCoord);' +
+'   gl_FragColor = vec4(color * color.w);' +
 ' }';
+
 
 // vertex shader for drawing a line
 var lineVertexSource =
@@ -65,6 +67,7 @@ var lineFragmentSource =
 '   gl_FragColor = vec4(1.0);' +
 ' }';
 
+
 // constants for the shaders
 var bounces = '5';
 var epsilon = '0.0001';
@@ -74,117 +77,18 @@ var lightVal = 0.5;
 
 // vertex shader, interpolate ray per-pixel
 var tracerVertexSource =
-' attribute vec3 vertex;' +
-' uniform vec3 eye, ray00, ray01, ray10, ray11;' +
-' varying vec3 initialRay;' +
-' void main() {' +
-'   vec2 percent = vertex.xy * 0.5 + 0.5;' +
-'   initialRay = mix(mix(ray00, ray01, percent.y), mix(ray10, ray11, percent.y), percent.x);' +
-'   gl_Position = vec4(vertex, 1.0);' +
-' }';
+`#version 300 es
+in vec3 vertex;
+uniform vec3 eye, ray00, ray01, ray10, ray11;
+out vec3 initialRay;
+void main() {
+    vec2 percent = vertex.xy * 0.5 + 0.5;
+    initialRay = mix(mix(ray00, ray01, percent.y), mix(ray10, ray11, percent.y), percent.x);
+    gl_Position = vec4(vertex, 1.0);
+}`;
 
-// start of fragment shader
-var tracerFragmentSourceHeader =
-' precision highp float;' +
-' uniform vec3 eye;' +
-' varying vec3 initialRay;' +
-' uniform float textureWeight;' +
-' uniform float timeSinceStart;' +
-' uniform sampler2D texture;' +
-' uniform float glossiness;' +
-' vec3 roomCubeMin = vec3(-1.0, -1.0, -1.0);' +
-' vec3 roomCubeMax = vec3(1.0, 1.0, 1.0);';
 
-// compute the near and far intersections of the cube (stored in the x and y components) using the slab method
-// no intersection means vec.x > vec.y (really tNear > tFar)
-var intersectCubeSource =
-' vec2 intersectCube(vec3 origin, vec3 ray, vec3 cubeMin, vec3 cubeMax) {' +
-'   vec3 tMin = (cubeMin - origin) / ray;' +
-'   vec3 tMax = (cubeMax - origin) / ray;' +
-'   vec3 t1 = min(tMin, tMax);' +
-'   vec3 t2 = max(tMin, tMax);' +
-'   float tNear = max(max(t1.x, t1.y), t1.z);' +
-'   float tFar = min(min(t2.x, t2.y), t2.z);' +
-'   return vec2(tNear, tFar);' +
-' }';
-
-// given that hit is a point on the cube, what is the surface normal?
-// TODO: do this with fewer branches
-var normalForCubeSource =
-' vec3 normalForCube(vec3 hit, vec3 cubeMin, vec3 cubeMax)' +
-' {' +
-'   if(hit.x < cubeMin.x + ' + epsilon + ') return vec3(-1.0, 0.0, 0.0);' +
-'   else if(hit.x > cubeMax.x - ' + epsilon + ') return vec3(1.0, 0.0, 0.0);' +
-'   else if(hit.y < cubeMin.y + ' + epsilon + ') return vec3(0.0, -1.0, 0.0);' +
-'   else if(hit.y > cubeMax.y - ' + epsilon + ') return vec3(0.0, 1.0, 0.0);' +
-'   else if(hit.z < cubeMin.z + ' + epsilon + ') return vec3(0.0, 0.0, -1.0);' +
-'   else return vec3(0.0, 0.0, 1.0);' +
-' }';
-
-// compute the near intersection of a sphere
-// no intersection returns a value of +infinity
-var intersectSphereSource =
-' float intersectSphere(vec3 origin, vec3 ray, vec3 sphereCenter, float sphereRadius) {' +
-'   vec3 toSphere = origin - sphereCenter;' +
-'   float a = dot(ray, ray);' +
-'   float b = 2.0 * dot(toSphere, ray);' +
-'   float c = dot(toSphere, toSphere) - sphereRadius*sphereRadius;' +
-'   float discriminant = b*b - 4.0*a*c;' +
-'   if(discriminant > 0.0) {' +
-'     float t = (-b - sqrt(discriminant)) / (2.0 * a);' +
-'     if(t > 0.0) return t;' +
-'   }' +
-'   return ' + infinity + ';' +
-' }';
-
-// given that hit is a point on the sphere, what is the surface normal?
-var normalForSphereSource =
-' vec3 normalForSphere(vec3 hit, vec3 sphereCenter, float sphereRadius) {' +
-'   return (hit - sphereCenter) / sphereRadius;' +
-' }';
-
-// use the fragment position for randomness
-var randomSource =
-' float random(vec3 scale, float seed) {' +
-'   return fract(sin(dot(gl_FragCoord.xyz + seed, scale)) * 43758.5453 + seed);' +
-' }';
-
-// random cosine-weighted distributed vector
-// from http://www.rorydriscoll.com/2009/01/07/better-sampling/
-var cosineWeightedDirectionSource =
-' vec3 cosineWeightedDirection(float seed, vec3 normal) {' +
-'   float u = random(vec3(12.9898, 78.233, 151.7182), seed);' +
-'   float v = random(vec3(63.7264, 10.873, 623.6736), seed);' +
-'   float r = sqrt(u);' +
-'   float angle = 6.283185307179586 * v;' +
-    // compute basis from normal
-'   vec3 sdir, tdir;' +
-'   if (abs(normal.x)<.5) {' +
-'     sdir = cross(normal, vec3(1,0,0));' +
-'   } else {' +
-'     sdir = cross(normal, vec3(0,1,0));' +
-'   }' +
-'   tdir = cross(normal, sdir);' +
-'   return r*cos(angle)*sdir + r*sin(angle)*tdir + sqrt(1.-u)*normal;' +
-' }';
-
-// random normalized vector
-var uniformlyRandomDirectionSource =
-' vec3 uniformlyRandomDirection(float seed) {' +
-'   float u = random(vec3(12.9898, 78.233, 151.7182), seed);' +
-'   float v = random(vec3(63.7264, 10.873, 623.6736), seed);' +
-'   float z = 1.0 - 2.0 * u;' +
-'   float r = sqrt(1.0 - z * z);' +
-'   float angle = 6.283185307179586 * v;' +
-'   return vec3(r * cos(angle), r * sin(angle), z);' +
-' }';
-
-// random vector in the unit sphere
-// note: this is probably not statistically uniform, saw raising to 1/3 power somewhere but that looks wrong?
-var uniformlyRandomVectorSource =
-' vec3 uniformlyRandomVector(float seed) {' +
-'   return uniformlyRandomDirection(seed) * sqrt(random(vec3(36.7539, 50.3658, 306.2759), seed));' +
-' }';
+// fragment shader
 
 // compute specular lighting contribution
 var specularReflection =
@@ -225,7 +129,7 @@ function makeShadow(objects) {
 
 function makeCalculateColor(objects) {
   return '' +
-' vec3 calculateColor(vec3 origin, vec3 ray, vec3 light) {' +
+' void calculateColor(vec3 origin, vec3 ray, vec3 light, inout vec3 ioColor, inout vec3 ioNormal, inout float ioDepth) {' +
 '   vec3 colorMask = vec3(1.0);' +
 '   vec3 accumulatedColor = vec3(0.0);' +
   
@@ -237,7 +141,7 @@ function makeCalculateColor(objects) {
 
       // find the closest intersection
 '     float t = ' + infinity + ';' +
-'     if(tRoom.x < tRoom.y) t = tRoom.y;' +
+'     if (tRoom.x < tRoom.y) t = tRoom.y;' +
       concat(objects, function(o){ return o.getMinimumIntersectCode(); }) +
 
       // info about hit
@@ -273,35 +177,127 @@ function makeCalculateColor(objects) {
 
       // calculate next origin
 '     origin = hit;' +
-'   }' +
+      
+      // output geometry info
+      `if (bounce == 0) {
+          ioNormal = normal;
+          ioDepth = t;
+      }
+      ` +
 
-'   return accumulatedColor;' +
+'   }' +
+'   ioColor = accumulatedColor;' +
 ' }';
 }
 
 function makeMain() {
-  return '' +
-' void main() {' +
-'   vec3 newLight = light + uniformlyRandomVector(timeSinceStart - 53.0) * ' + lightSize + ';' +
-'   vec3 texture = texture2D(texture, gl_FragCoord.xy / 512.0).rgb;' +
-'   gl_FragColor = vec4(mix(calculateColor(eye, initialRay, newLight), texture, textureWeight), 1.0);' +
-' }';
+  return `void main() {
+    vec3 newLight = light + uniformlyRandomVector(timeSinceStart - 53.0) * ${lightSize};
+    vec3 texture_0 = texture(texture_0, gl_FragCoord.xy / 512.0).rgb;
+    vec3 color; vec3 normal; float depth;
+    calculateColor(eye, initialRay, newLight, color, normal, depth);
+    fragColor = vec4(color, 1.0);
+    gBuffer = vec4(normal, depth);
+}`;
 }
 
 function makeTracerFragmentSource(objects) {
-  return tracerFragmentSourceHeader +
-  concat(objects, function(o){ return o.getGlobalCode(); }) +
-  intersectCubeSource +
-  normalForCubeSource +
-  intersectSphereSource +
-  normalForSphereSource +
-  randomSource +
-  cosineWeightedDirectionSource +
-  uniformlyRandomDirectionSource +
-  uniformlyRandomVectorSource +
-  makeShadow(objects) +
-  makeCalculateColor(objects) +
+  const fs = 
+  // variables
+  `#version 300 es
+  precision highp float;
+  layout(location = 0) out vec4 fragColor;
+  layout(location = 1) out vec4 gBuffer;
+  uniform vec3 eye;
+  in vec3 initialRay;
+  uniform float textureWeight;
+  uniform float timeSinceStart;
+  uniform sampler2D texture_0;
+  uniform float glossiness;
+  vec3 roomCubeMin = vec3(-1.0, -1.0, -1.0);
+  vec3 roomCubeMax = vec3(1.0, 1.0, 1.0);
+  ` + 
+  // objects
+  concat(objects, function(o){ return o.getGlobalCode(); }) + 
+  // path tracing functions
+  `vec2 intersectCube(vec3 origin, vec3 ray, vec3 cubeMin, vec3 cubeMax) {
+      vec3 tMin = (cubeMin - origin) / ray;
+      vec3 tMax = (cubeMax - origin) / ray;
+      vec3 t1 = min(tMin, tMax);
+      vec3 t2 = max(tMin, tMax);
+      float tNear = max(max(t1.x, t1.y), t1.z);
+      float tFar = min(min(t2.x, t2.y), t2.z);
+      return vec2(tNear, tFar);
+  }
+
+
+  vec3 normalForCube(vec3 hit, vec3 cubeMin, vec3 cubeMax) {
+      if(hit.x < cubeMin.x + 0.0001) return vec3(-1.0, 0.0, 0.0);
+      else if(hit.x > cubeMax.x - 0.0001) return vec3(1.0, 0.0, 0.0);
+      else if(hit.y < cubeMin.y + 0.0001) return vec3(0.0, -1.0, 0.0);
+      else if(hit.y > cubeMax.y - 0.0001) return vec3(0.0, 1.0, 0.0);
+      else if(hit.z < cubeMin.z + 0.0001) return vec3(0.0, 0.0, -1.0);
+      else return vec3(0.0, 0.0, 1.0);
+  }
+
+
+  float intersectSphere(vec3 origin, vec3 ray, vec3 sphereCenter, float sphereRadius) {
+      vec3 toSphere = origin - sphereCenter;
+      float a = dot(ray, ray);
+      float b = 2.0 * dot(toSphere, ray);
+      float c = dot(toSphere, toSphere) - sphereRadius*sphereRadius;
+      float discriminant = b*b - 4.0*a*c;
+      if (discriminant > 0.0) {
+          float t = (-b - sqrt(discriminant)) / (2.0 * a);
+          if (t > 0.0) return t;
+      }
+      return 10000.0;
+  }
+
+
+  vec3 normalForSphere(vec3 hit, vec3 sphereCenter, float sphereRadius) {
+      return (hit - sphereCenter) / sphereRadius;
+  }
+
+
+  float random(vec3 scale, float seed) {
+      return fract(sin(dot(gl_FragCoord.xyz + seed, scale)) * 43758.5453 + seed);
+  }
+
+
+  vec3 cosineWeightedDirection(float seed, vec3 normal) {
+      float u = random(vec3(12.9898, 78.233, 151.7182), seed);
+      float v = random(vec3(63.7264, 10.873, 623.6736), seed);
+      float r = sqrt(u);
+      float angle = 6.283185307179586 * v;
+      vec3 sdir, tdir;
+      if (abs(normal.x)<.5) {
+          sdir = cross(normal, vec3(1,0,0));
+      } else {
+          sdir = cross(normal, vec3(0,1,0));
+      }
+      tdir = cross(normal, sdir);
+      return r*cos(angle)*sdir + r*sin(angle)*tdir + sqrt(1.-u)*normal;
+  }
+
+
+  vec3 uniformlyRandomDirection(float seed) {
+      float u = random(vec3(12.9898, 78.233, 151.7182), seed);
+      float v = random(vec3(63.7264, 10.873, 623.6736), seed);
+      float z = 1.0 - 2.0 * u;
+      float r = sqrt(1.0 - z * z);
+      float angle = 6.283185307179586 * v;
+      return vec3(r * cos(angle), r * sin(angle), z);
+  }
+
+
+  vec3 uniformlyRandomVector(float seed) {
+      return uniformlyRandomDirection(seed) * sqrt(random(vec3(36.7539, 50.3658, 306.2759), seed));
+}` +
+  makeShadow(objects) + '\n' +
+  makeCalculateColor(objects) + '\n' +
   makeMain();
+  return fs;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -649,14 +645,13 @@ Light.prototype.intersect = function(origin, ray) {
 ////////////////////////////////////////////////////////////////////////////////
 
 function PathTracer() {
+  // create vertex buffer
   var vertices = [
     -1, -1,
     -1, +1,
     +1, -1,
     +1, +1
   ];
-
-  // create vertex buffer
   this.vertexBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
@@ -667,13 +662,20 @@ function PathTracer() {
   // create textures
   var type = gl.getExtension('OES_texture_float') ? gl.FLOAT : gl.UNSIGNED_BYTE;
   this.textures = [];
-  for(var i = 0; i < 2; i++) {
+  for(var i = 0; i < 15; i++) {
       this.textures.push(gl.createTexture());
     gl.bindTexture(gl.TEXTURE_2D, this.textures[i]);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 512, 512, 0, gl.RGB, type, null);
   }
+
+  this.gBufferTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 512, 512, 0, gl.RGB, type, null);
+
   gl.bindTexture(gl.TEXTURE_2D, null);
 
   // create render shader
@@ -684,6 +686,7 @@ function PathTracer() {
   // objects and shader will be filled in when setObjects() is called
   this.objects = [];
   this.sampleCount = 0;
+  this.sampleIndex = 0;
   this.tracerProgram = null;
 }
 
@@ -713,30 +716,34 @@ PathTracer.prototype.update = function(matrix, timeSinceStart) {
   this.uniforms.ray10 = getEyeRay(matrix, +1, -1);
   this.uniforms.ray11 = getEyeRay(matrix, +1, +1);
   this.uniforms.timeSinceStart = timeSinceStart;
-  this.uniforms.textureWeight = this.sampleCount / (this.sampleCount + 1);
 
   // set uniforms
   gl.useProgram(this.tracerProgram);
   setUniforms(this.tracerProgram, this.uniforms);
 
   // render to texture
+  this.sampleIndex++;
+  this.sampleIndex %= this.textures.length;
+  this.sampleCount++;
+  console.log(this.sampleIndex, this.sampleCount);
+
   gl.useProgram(this.tracerProgram);
-  gl.bindTexture(gl.TEXTURE_2D, this.textures[0]);
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[1], 0);
+
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[this.sampleIndex], 0);  // path tracing result
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.gBufferTexture, 0);  // normal and depth
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+
   gl.vertexAttribPointer(this.tracerVertexAttribute, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-  // ping pong textures
-  this.textures.reverse();
-  this.sampleCount++;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 };
 
 PathTracer.prototype.render = function() {
   gl.useProgram(this.renderProgram);
-  gl.bindTexture(gl.TEXTURE_2D, this.textures[0]);
+  gl.bindTexture(gl.TEXTURE_2D, this.textures[this.sampleIndex]);
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.vertexAttribPointer(this.renderVertexAttribute, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -1141,7 +1148,11 @@ window.onload = function() {
   gl = null;
   error = document.getElementById('error');
   canvas = document.getElementById('canvas');
-  try { gl = canvas.getContext('experimental-webgl'); } catch(e) {}
+  try { 
+    gl = canvas.getContext('webgl2');
+  } catch(e) {
+    console.error(e);
+  }
 
   if(gl) {
     error.innerHTML = 'Loading...';
@@ -1159,7 +1170,7 @@ window.onload = function() {
     ui.setObjects(makeSphereColumn());
     var start = new Date();
     error.style.zIndex = -1;
-    setInterval(function(){ tick((new Date() - start) * 0.001); }, 1000 / 60);
+    setInterval(function(){ tick((new Date() - start) * 0.001); }, 1000);
   } else {
     error.innerHTML = 'Your browser does not support WebGL.<br>Please see <a href="http://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">Getting a WebGL Implementation</a>.';
   }
