@@ -47,16 +47,13 @@ precision highp float;
 out vec4 fragColor;
 in vec2 texCoord; 
 uniform sampler2D colorTexture;
-uniform sampler2D gBufferTexture;
+uniform sampler2D rawColorTexture;
 void main() {
     vec4 color = texture(colorTexture, texCoord);
     float variance = color.w;
     color.w = 1.0;
-    vec4 gBuffer = texture(gBufferTexture, texCoord);
-    float depth = gBuffer.w;
-    vec3 normal = gBuffer.xyz;
-    // fragColor = vec4(depth, depth, depth, 1.0);
-    // fragColor = vec4(normal, 1.0);  // normal
+    vec4 rawColor = texture(rawColorTexture, texCoord);
+    
     fragColor = color;
 
 
@@ -74,10 +71,12 @@ void main() {
     }
     variance = gaussianColor.w;
 
-    // if (texCoord.y < 0.5) fragColor = vec4(variance, variance, variance, 1.0);
-    // if (texCoord.x < 0.5) 
     fragColor = mix(color, gaussianColor, variance);
     fragColor.w = 1.0;
+    // if (texCoord.x < 0.5) 
+      // fragColor = vec4(variance, variance, variance, 1.0);
+      // fragColor = rawColor;
+      fragColor = color;
 }`;
 
 // fragment shader for drawing a textured quad
@@ -843,7 +842,7 @@ function PathTracer() {
   gl.useProgram(this.renderProgram);
   const colorTextureLoc = gl.getUniformLocation(this.renderProgram, "colorTexture");
   gl.uniform1i(colorTextureLoc, 0);
-  const gBufferTextureLoc = gl.getUniformLocation(this.renderProgram, "gBufferTexture");
+  const gBufferTextureLoc = gl.getUniformLocation(this.renderProgram, "rawColorTexture");
   gl.uniform1i(gBufferTextureLoc, 1);
 
   // create denoiser shader
@@ -980,7 +979,7 @@ PathTracer.prototype.render = function() {
   gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[1]);
   
   gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[1]);
+  gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[0]);
 
   // gl.activeTexture(gl.TEXTURE2);
   // gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[0]);
@@ -1419,7 +1418,19 @@ window.onload = function() {
     ui.setObjects(makeSphereColumn());
     var start = new Date();
     error.style.zIndex = -1;
-    setInterval(function(){ tick((new Date() - start) * 0.001); }, 1000 / 60);
+
+    var stats = new Stats();
+    stats.setMode(1);
+    stats.domElement.style.left = '0px';
+    stats.domElement.style.top = '0px';
+    document.body.appendChild(stats.domElement);
+    
+
+    setInterval(function(){ 
+      stats.begin(); 
+      tick((new Date() - start) * 0.001); 
+      stats.end();
+    }, 1000 / 60);
   } else {
     error.innerHTML = 'Your browser does not support WebGL.<br>Please see <a href="http://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">Getting a WebGL Implementation</a>.';
   }
