@@ -50,10 +50,34 @@ uniform sampler2D colorTexture;
 uniform sampler2D gBufferTexture;
 void main() {
     vec4 color = texture(colorTexture, texCoord);
+    float variance = color.w;
+    color.w = 1.0;
     vec4 gBuffer = texture(gBufferTexture, texCoord);
-    // fragColor = vec4((vec3(1.0, 1.0, 1.0) * gBuffer.w), 1.0); // depth
-    // fragColor = vec4(gBuffer.xyz, 1.0);  // normal
+    float depth = gBuffer.w;
+    vec3 normal = gBuffer.xyz;
+    // fragColor = vec4(depth, depth, depth, 1.0);
+    // fragColor = vec4(normal, 1.0);  // normal
     fragColor = color;
+
+
+    float kernal[25] = float[](0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288, 
+      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
+      0.03391774626899505, 0.07180386941492609, 0.09219799334529226, 0.07180386941492609, 0.03391774626899505, 
+      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
+      0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288);
+    vec4 gaussianColor = vec4(0,0,0,0);
+    for (int i = 0; i < 5; ++i) {
+      for (int j = 0; j < 5; ++j) {
+        int index = i * 5 + j;
+        gaussianColor += kernal[index] * texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 2)), (1.0 / 512.0 * float(j - 2))));
+      }
+    }
+    variance = gaussianColor.w;
+
+    // if (texCoord.y < 0.5) fragColor = vec4(variance, variance, variance, 1.0);
+    // if (texCoord.x < 0.5) 
+    fragColor = mix(color, gaussianColor, variance);
+    fragColor.w = 1.0;
 }`;
 
 // fragment shader for drawing a textured quad
@@ -76,6 +100,9 @@ void main() {
     vec4 integratedColorSquare = texture(integratedColorSquareTexture, texCoord);
     vec4 lastGBuffer = texture(lastGBufferTexture, texCoord);
 
+    vec4 varianceVec = vec4((integratedColorSquare - integratedColor * integratedColor).xyz, 0.0);
+    float variance = dot(varianceVec, varianceVec);
+
     float deltaDepth = abs(lastGBuffer.w - gBuffer.w);
     
     vec3 deltaNormal = gBuffer.xyz - lastGBuffer.xyz;
@@ -91,39 +118,26 @@ void main() {
         clampColorMax = vec4(max(clampColorMax.x, neighbor.x), max(clampColorMax.y, neighbor.y), max(clampColorMax.z, neighbor.z), 1.0);
       }
     }
-    vec4 clampThreshold = vec4(0.01, 0.01, 0.01, 0);
+    vec4 clampThreshold = vec4(0.05, 0.05, 0.05, 1.0);
     clampColorMin -= clampThreshold;
     clampColorMax += clampThreshold;
-    // vec4 deltaColor = avgColor - integratedColor;
-    // float dotDeltaColor = dot(deltaColor, deltaColor);
 
-    // if (deltaDepth < 0.01 && dotDeltaNormal < 0.01) {
+    float mixWeight = 0.0;
     if (lessThanEqual(clampColorMin, integratedColor) == bvec4(true,true,true,true) && greaterThanEqual(clampColorMax, integratedColor) == bvec4(true,true,true,true)) {
-      // fragColor = vec4(1, 1, 1, 1.0);
-      fragColor = mix(rawColor, integratedColor, 0.95) + vec4(0,0,0,1);
-      colorSquare = mix(rawColorSquare, integratedColorSquare, 0.95) + vec4(0,0,0,1);
+      mixWeight = 0.9;
+    } else if (deltaDepth < 0.01 && dotDeltaNormal < 0.01) {
+      // same geometry, only light changes
+      mixWeight = 0.2;
+      variance = 1.0;
     } else {
-      // fragColor = vec4(0,0,0, 1.0);
-      fragColor = rawColor;
-      colorSquare = rawColorSquare;
+      // disocclusion
+      mixWeight = 0.0;
+      variance = 0.0;
     }
-    // fragColor = clampColorMax;
+    fragColor = mix(rawColor, integratedColor, mixWeight) + vec4(0,0,0,1);
+    colorSquare = mix(rawColorSquare, integratedColorSquare, mixWeight) + vec4(0,0,0,1);
+    fragColor.w = variance * 100.0;
 
-    vec4 varianceVec = integratedColorSquare - integratedColor * integratedColor;
-    float variance = dot(varianceVec, varianceVec);
-
-    float kernal[25] = float[](0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288, 
-      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
-      0.03391774626899505, 0.07180386941492609, 0.09219799334529226, 0.07180386941492609, 0.03391774626899505, 
-      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
-      0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288);
-    vec4 gaussianColor = vec4(0,0,0,1);
-    for (int i = 0; i < 5; ++i) {
-      for (int j = 0; j < 5; ++j) {
-        int index = i * 5 + j;
-        gaussianColor += kernal[index] * texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 2)), (1.0 / 512.0 * float(j - 2))));
-      }
-    }
 
     // fragColor = rawColor;
     // fragColor = avgColor;
@@ -933,24 +947,24 @@ PathTracer.prototype.render = function() {
 
   // bind texture
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[1]);
+  gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[0]);
   
   gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[1]);
+  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
   
   gl.activeTexture(gl.TEXTURE2);
-  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[1]);
+  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[0]);
   
   gl.activeTexture(gl.TEXTURE3);
-  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorSquareTextures[1]);
+  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorSquareTextures[0]);
 
   gl.activeTexture(gl.TEXTURE4);
-  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
+  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[1]);
 
   // render to texture
   gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.integratedColorTextures[0], 0);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.integratedColorSquareTextures[0], 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.integratedColorTextures[1], 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.integratedColorSquareTextures[1], 0);
   gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
   
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
@@ -963,10 +977,10 @@ PathTracer.prototype.render = function() {
 
   // bind texture
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[0]);
+  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[1]);
   
   gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
+  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[1]);
 
   // gl.activeTexture(gl.TEXTURE2);
   // gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[0]);
