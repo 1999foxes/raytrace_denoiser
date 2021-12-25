@@ -46,12 +46,31 @@ var renderFragmentSource =
 precision highp float;
 out vec4 fragColor;
 in vec2 texCoord; 
-uniform sampler2D colorTexture; 
+uniform sampler2D colorTexture;
 uniform sampler2D gBufferTexture; 
+uniform sampler2D colorSquareTexture;
 void main() {
     vec4 color = texture(colorTexture, texCoord);
     vec4 gBuffer = texture(gBufferTexture, texCoord);
-    fragColor = color * gBuffer.x;
+    vec4 colorSquare = texture(colorSquareTexture, texCoord);
+    // fragColor = vec4((vec3(1.0, 1.0, 1.0) * gBuffer.w), 1.0); // depth
+    // fragColor = vec4(gBuffer.xyz, 1.0);  // normal
+    vec4 varianceVec = colorSquare - color * color;
+    float variance = dot(varianceVec, varianceVec);
+    //vec4 colors[25];
+    vec4 avgColor = vec4(0,0,0,1);
+    for (int i = 0; i < 5; ++i) {
+      for (int j = 0; j < 5; ++j) {
+        int index = i * 5 + j;
+        //colors[index] = texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 2)), (1.0 / 512.0 * float(j - 2))));
+        //avgColor += colors[index];
+        avgColor += (1.0 / 25.0) * texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 2)), (1.0 / 512.0 * float(j - 2))));
+      }
+    }
+    fragColor = color;
+    //colors[0] = texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(100)), 0));
+    //fragColor = avgColor;
+    //fragColor = vec4(variance, variance, variance, 0.0) * 30.0 + vec4(0,0,0,1);
 }`;
 
 
@@ -185,8 +204,8 @@ function makeCalculateColor(objects) {
       
       // output geometry info
       `if (bounce == 0) {
-          ioNormal = normal;
-          ioDepth = t;
+          ioNormal = normal * 0.5 + 0.5;
+          ioDepth = t * 0.05;
       }
       ` +
 
@@ -198,10 +217,35 @@ function makeCalculateColor(objects) {
 function makeMain() {
   return `void main() {
     vec3 newLight = light + uniformlyRandomVector(timeSinceStart - 53.0) * ${lightSize};
-    vec3 texture_0 = texture(texture_0, gl_FragCoord.xy / 512.0).rgb;
+    vec2 texCoord = gl_FragCoord.xy / 512.0;
+    vec4 lastColor = texture(colorTexture, texCoord).rgba;
+    vec4 lastGBuffer = texture(gBufferTexture, texCoord).rgba;
+    vec4 lastColorSquare = texture(colorSquareTexture, texCoord).rgba;
     vec3 color; vec3 normal; float depth;
     calculateColor(eye, initialRay, newLight, color, normal, depth);
-    fragColor = vec4(color, 1.0);
+    float deltaDepth = abs(lastGBuffer.w - depth);
+    vec3 deltaNormal = normal - lastGBuffer.xyz;
+    float dotDeltaNormal = dot(deltaNormal, deltaNormal);
+
+    vec4 avgColor = vec4(0,0,0,1);
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        avgColor += (1.0 / 9.0) * texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 1)), (1.0 / 512.0 * float(j - 1))));
+      }
+    }
+    vec4 deltaColor = avgColor - lastColor;
+    float dotDeltaColor = dot(deltaColor, deltaColor);
+
+    if (deltaDepth < 0.01 && dotDeltaNormal < 0.1) {
+      //fragColor = vec4(1, 1, 1, 1.0);
+      fragColor = vec4(mix(color, lastColor.xyz, 0.8), 1.0);
+      colorSquare = vec4(mix(color * color, lastColorSquare.xyz, 0.8), 1.0);
+    } else {
+      //fragColor = vec4(dotDeltaNormal,dotDeltaNormal,dotDeltaNormal, 1.0);
+      //fragColor = vec4(0,0,0, 1.0);
+      fragColor = vec4(color, 1.0);
+      colorSquare = vec4(color * color, 1.0);
+    }
     gBuffer = vec4(normal, depth);
 }`;
 }
@@ -213,14 +257,18 @@ function makeTracerFragmentSource(objects) {
   precision highp float;
   layout(location = 0) out vec4 fragColor;
   layout(location = 1) out vec4 gBuffer;
+  layout(location = 2) out vec4 colorSquare;
   uniform vec3 eye;
   in vec3 initialRay;
   uniform float textureWeight;
   uniform float timeSinceStart;
-  uniform sampler2D texture_0;
+  uniform sampler2D colorTexture;
+  uniform sampler2D gBufferTexture; 
+  uniform sampler2D colorSquareTexture;
   uniform float glossiness;
   vec3 roomCubeMin = vec3(-1.0, -1.0, -1.0);
   vec3 roomCubeMax = vec3(1.0, 1.0, 1.0);
+  
   ` + 
   // objects
   concat(objects, function(o){ return o.getGlobalCode(); }) + 
@@ -665,14 +713,23 @@ function PathTracer() {
   this.framebuffer = gl.createFramebuffer();
 
   // create textures
-  var type = gl.getExtension('OES_texture_float') ? gl.FLOAT : gl.UNSIGNED_BYTE;
-  this.textures = [];
-  for(var i = 0; i < 15; i++) {
-      this.textures.push(gl.createTexture());
-    gl.bindTexture(gl.TEXTURE_2D, this.textures[i]);
+  var type = gl.UNSIGNED_BYTE;
+  this.colorTextures = [];
+  for (var i = 0; i < 2; i++) {
+      this.colorTextures.push(gl.createTexture());
+    gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[i]);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 512, 512, 0, gl.RGB, type, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
+  }
+
+  this.colorSquareTextures = [];
+  for (var i = 0; i < 2; i++) {
+      this.colorSquareTextures.push(gl.createTexture());
+    gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[i]);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
   }
 
   this.gBufferTextures = [];
@@ -695,6 +752,8 @@ function PathTracer() {
   gl.uniform1i(colorTextureLoc, 0);
   const gBufferTextureLoc = gl.getUniformLocation(this.renderProgram, "gBufferTexture");
   gl.uniform1i(gBufferTextureLoc, 1);
+  const colorSquareTextureLoc = gl.getUniformLocation(this.renderProgram, "colorSquareTexture");
+  gl.uniform1i(colorSquareTextureLoc, 2);
 
 
   // objects and shader will be filled in when setObjects() is called
@@ -716,6 +775,14 @@ PathTracer.prototype.setObjects = function(objects) {
   this.tracerProgram = compileShader(tracerVertexSource, makeTracerFragmentSource(objects));
   this.tracerVertexAttribute = gl.getAttribLocation(this.tracerProgram, 'vertex');
   gl.enableVertexAttribArray(this.tracerVertexAttribute);
+  
+  gl.useProgram(this.tracerProgram);
+  const colorTextureLoc = gl.getUniformLocation(this.tracerProgram, "colorTexture");
+  gl.uniform1i(colorTextureLoc, 0);
+  const gBufferTextureLoc = gl.getUniformLocation(this.tracerProgram, "gBufferTexture");
+  gl.uniform1i(gBufferTextureLoc, 1);
+  const colorSquareTextureLoc = gl.getUniformLocation(this.tracerProgram, "colorSquareTexture");
+  gl.uniform1i(colorSquareTextureLoc, 2);
 };
 
 PathTracer.prototype.update = function(matrix, timeSinceStart) {
@@ -736,19 +803,27 @@ PathTracer.prototype.update = function(matrix, timeSinceStart) {
   setUniforms(this.tracerProgram, this.uniforms);
 
   // render to texture
-  this.sampleIndex++;
-  this.sampleIndex %= this.textures.length;
-  this.sampleCount++;
-  console.log(this.sampleIndex, this.sampleCount);
-  this.gBufferTextures.reverse();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[0]);
+  
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
 
-  gl.useProgram(this.tracerProgram);
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[0]);
+
+  this.colorTextures.reverse();
+  this.gBufferTextures.reverse();
+  this.colorSquareTextures.reverse();
+
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
 
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[this.sampleIndex], 0);  // path tracing result
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.colorTextures[0], 0);  // path tracing result
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.gBufferTextures[0], 0);  // normal and depth
-  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, this.colorSquareTextures[0], 0);  // color^2
+  // gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
 
   gl.vertexAttribPointer(this.tracerVertexAttribute, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -760,10 +835,13 @@ PathTracer.prototype.render = function() {
   gl.useProgram(this.renderProgram);
 
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.textures[this.sampleIndex]);
+  gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[0]);
   
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
+
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[0]);
   
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.vertexAttribPointer(this.renderVertexAttribute, 2, gl.FLOAT, false, 0, 0);
@@ -1192,7 +1270,7 @@ window.onload = function() {
     ui.setObjects(makeSphereColumn());
     var start = new Date();
     error.style.zIndex = -1;
-    setInterval(function(){ tick((new Date() - start) * 0.001); }, 1000 / 1);
+    setInterval(function(){ tick((new Date() - start) * 0.001); }, 1000 / 2);
   } else {
     error.innerHTML = 'Your browser does not support WebGL.<br>Please see <a href="http://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">Getting a WebGL Implementation</a>.';
   }
