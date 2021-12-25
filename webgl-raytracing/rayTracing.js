@@ -76,7 +76,7 @@ void main() {
     // if (texCoord.x < 0.5) 
       // fragColor = vec4(variance, variance, variance, 1.0);
       // fragColor = rawColor;
-      fragColor = color;
+      // fragColor = color;
 }`;
 
 // fragment shader for drawing a textured quad
