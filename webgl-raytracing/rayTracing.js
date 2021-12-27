@@ -1455,7 +1455,7 @@ window.onload = function() {
       stats.begin(); 
       tick((new Date() - start) * 0.001); 
       stats.end();
-    }, 1000 / 0.5);
+    }, 1000 / 60);
   } else {
     error.innerHTML = 'Your browser does not support WebGL.<br>Please see <a href="http://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">Getting a WebGL Implementation</a>.';
   }
