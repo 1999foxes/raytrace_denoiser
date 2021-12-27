@@ -78,15 +78,14 @@ v){c=Math.min(c,f);g=Math.max(g,f);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,
 <body>
 
   <h1>WebGL Path Tracing</h1>
-
-  <p>Path tracing is a realistic lighting algorithm that simulates light bouncing around a scene.&nbsp; This path tracer uses WebGL for realtime performance and supports diffuse, mirrored, and glossy surfaces.&nbsp; The path tracer is continually rendering, so the scene will start off grainy and become smoother over time.&nbsp; Here's how to interact with it:</p>
+  <h1>With Spatial-Temporal Denoiser</h1>
 
   <ul>
-    <li>Add an object using the "Add Sphere" or "Add Cube" buttons</li>
     <li>Select an object by clicking on it</li>
     <li>Move the selection along the face of its selection box by dragging around on that face</li>
-    <li>Delete the selection using the backspace key</li>
     <li>Rotate the camera by dragging the background</li>
+    <li>Delete the selection using the backspace key</li>
+    <li>Toggle the denoiser to see the difference</li>
   </ul>
 
   <div id="main">
@@ -127,10 +126,19 @@ v){c=Math.min(c,f);g=Math.max(g,f);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,
       <br><button onclick="javascript:ui.setObjects(makeTableAndChair())">Table and Chair</button>
       <br><button onclick="javascript:ui.setObjects(makeStacks())">Stacks</button>
     </p>
+
+    <p>
+      <b>Denoiser:</b>
+      <select id="denoise">
+        <option value="0" selected>spatial-temporal</option>
+        <option value="1">temporal only</option>
+        <option value="2">off</option>
+      </select>
+    </p>
   </div>
 
-  <p>The entire scene is dynamically compiled into a GLSL shader.&nbsp; Everything can be repositioned using the current shader, but any geometry or material change means a recompilation.&nbsp; To calculate a pixel color, a ray is shot into the scene and allowed to bounce around five times.&nbsp; At each bounce, the direct light incoming at that point (including shadows) is multiplied by all previous material colors and accumulated.&nbsp; Soft shadows are achieved by randomly jittering the light position per-pixel.&nbsp; The path tracing solution will only completely converge if your browser supports the OES_texture_float extension.</p>
-  <p id="footer">Made by <a href="/">Evan Wallace</a> in 2010</p>
+  <p> <a href="https://github.com/evanw/webgl-path-tracing">Path Tracer Made by Evan Wallace in 2010</a> </p>
+  <p> <a href="https://github.com/1999foxes/raytrace_denoiser">Denoiser Made by 1999foxes in 2021</a> </p>
 
 
 </body></html>

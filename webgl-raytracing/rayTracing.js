@@ -1,5 +1,6 @@
 /*
- WebGL Path Tracing (http://madebyevan.com/webgl-path-tracing/)
+ WebGL Path Tracing With Temporal Spatial Denoiser
+
  License: MIT License (see below)
 
  Copyright (c) 2010 Evan Wallace
@@ -30,8 +31,8 @@
 // shader strings
 ////////////////////////////////////////////////////////////////////////////////
 
-// vertex shader for drawing a textured quad
-var renderVertexSource = 
+// vertex shader for denoiser, which draws a textured quad
+var denoiserVertexSource = 
 `#version 300 es
 in vec3 vertex; 
 out vec2 texCoord; 
@@ -40,47 +41,8 @@ void main() {
     gl_Position = vec4(vertex, 1.0);
 }`;
 
-// fragment shader for drawing a textured quad
-var renderFragmentSource =
-`#version 300 es
-precision highp float;
-out vec4 fragColor;
-in vec2 texCoord; 
-uniform sampler2D colorTexture;
-uniform sampler2D rawColorTexture;
-void main() {
-    vec4 color = texture(colorTexture, texCoord);
-    float variance = color.w;
-    color.w = 1.0;
-    vec4 rawColor = texture(rawColorTexture, texCoord);
-    
-    fragColor = color;
-
-
-    float kernal[25] = float[](0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288, 
-      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
-      0.03391774626899505, 0.07180386941492609, 0.09219799334529226, 0.07180386941492609, 0.03391774626899505, 
-      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
-      0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288);
-    vec4 gaussianColor = vec4(0,0,0,0);
-    for (int i = 0; i < 5; ++i) {
-      for (int j = 0; j < 5; ++j) {
-        int index = i * 5 + j;
-        gaussianColor += kernal[index] * texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 2)), (1.0 / 512.0 * float(j - 2))));
-      }
-    }
-    variance = gaussianColor.w;
-
-    fragColor = mix(color, gaussianColor, variance);
-    fragColor.w = 1.0;
-    // if (texCoord.x < 0.5) 
-      // fragColor = vec4(variance, variance, variance, 1.0);
-      // fragColor = rawColor;
-      // fragColor = color;
-}`;
-
-// fragment shader for drawing a textured quad
-var denoiserFragmentSource =
+// fragment shader for temporal denoiser
+var temporalDenoiserFragmentSource =
 `#version 300 es
 precision highp float;
 layout(location = 0) out vec4 fragColor;
@@ -91,6 +53,20 @@ uniform sampler2D gBufferTexture;
 uniform sampler2D integratedColorTexture;
 uniform sampler2D integratedColorSquareTexture;
 uniform sampler2D lastGBufferTexture;
+
+
+vec3 rgb2hsv(vec3 c)
+{
+    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+
 void main() {
     vec4 rawColor = texture(colorTexture, texCoord);
     vec4 rawColorSquare = rawColor * rawColor;
@@ -101,49 +77,106 @@ void main() {
 
     vec4 varianceVec = vec4((integratedColorSquare - integratedColor * integratedColor).xyz, 0.0);
     float variance = dot(varianceVec, varianceVec);
+    float sampleConfidence = integratedColorSquare.w;
 
     float deltaDepth = abs(lastGBuffer.w - gBuffer.w);
     
     vec3 deltaNormal = gBuffer.xyz - lastGBuffer.xyz;
     float dotDeltaNormal = dot(deltaNormal, deltaNormal);
 
-    vec4 clampColorMin = vec4(1,1,1,1);
-    vec4 clampColorMax = vec4(0,0,0,1);
-    for (int i = 0; i < 3; ++i) {
-      for (int j = 0; j < 3; ++j) {
-        // avgColor += (1.0 / 9.0) * texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 1)), (1.0 / 512.0 * float(j - 1))));
-        vec4 neighbor = texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 1)), (1.0 / 512.0 * float(j - 1))));
-        clampColorMin = vec4(min(clampColorMin.x, neighbor.x), min(clampColorMin.y, neighbor.y), min(clampColorMin.z, neighbor.z), 1.0);
-        clampColorMax = vec4(max(clampColorMax.x, neighbor.x), max(clampColorMax.y, neighbor.y), max(clampColorMax.z, neighbor.z), 1.0);
+    vec3 clampColorMin = vec3(1,1,1);
+    vec3 clampColorMax = vec3(0,0,0);
+    for (int i = 0; i < 5; ++i) {
+      for (int j = 0; j < 5; ++j) {
+        vec3 neighbor = rgb2hsv(texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 2)), (1.0 / 512.0 * float(j - 2)))).xyz);
+        clampColorMin = vec3(min(clampColorMin.x, neighbor.x), min(clampColorMin.y, neighbor.y), min(clampColorMin.z, neighbor.z));
+        clampColorMax = vec3(max(clampColorMax.x, neighbor.x), max(clampColorMax.y, neighbor.y), max(clampColorMax.z, neighbor.z));
       }
     }
-    vec4 clampThreshold = vec4(0.05, 0.05, 0.05, 1.0);
-    clampColorMin -= clampThreshold;
-    clampColorMax += clampThreshold;
 
     float mixWeight = 0.0;
-    if (lessThanEqual(clampColorMin, integratedColor) == bvec4(true,true,true,true) && greaterThanEqual(clampColorMax, integratedColor) == bvec4(true,true,true,true)) {
-      mixWeight = 0.9;
-    } else if (deltaDepth < 0.01 && dotDeltaNormal < 0.01) {
-      // same geometry, only light changes
-      mixWeight = 0.2;
-      variance = 1.0;
+    vec3 hsvIntegratedColor = rgb2hsv(integratedColor.xyz);
+    if (deltaDepth < 0.01 && dotDeltaNormal < 0.01 
+        && lessThanEqual(clampColorMin, hsvIntegratedColor) == bvec3(true,true,true) 
+        && greaterThanEqual(clampColorMax, hsvIntegratedColor) == bvec3(true,true,true)) {
+      mixWeight = 0.8;
+      sampleConfidence += 0.1;
     } else {
       // disocclusion
       mixWeight = 0.0;
-      variance = 0.0;
+      sampleConfidence = 0.0;
     }
-    fragColor = mix(rawColor, integratedColor, mixWeight) + vec4(0,0,0,1);
-    colorSquare = mix(rawColorSquare, integratedColorSquare, mixWeight) + vec4(0,0,0,1);
-    fragColor.w = variance * 100.0;
+
+    fragColor = mix(rawColor, integratedColor, mixWeight);
+    fragColor.w = 1.0;
+
+    colorSquare = mix(rawColorSquare, integratedColorSquare, mixWeight);
+    colorSquare.w = sampleConfidence;  
+}`;
 
 
-    // fragColor = rawColor;
-    // fragColor = avgColor;
-    // fragColor = gaussianColor;
-    // fragColor = vec4((vec3(1.0, 1.0, 1.0) * gBuffer.w), 1.0); // depth
-    // fragColor = vec4(gBuffer.xyz, 1.0);  // normal
-    // fragColor = vec4(variance, variance, variance, 0.0) * 1.0 + vec4(0,0,0,1);
+// fragment shader for spatial denoiser
+var spatialDenoiserFragmentSource =
+`#version 300 es
+precision highp float;
+layout(location = 0) out vec4 fragColor;
+in vec2 texCoord;
+uniform sampler2D integratedColorTexture;
+uniform sampler2D gBufferTexture;
+uniform sampler2D integratedColorSquareTexture;
+uniform int stepLength;
+
+void main() {
+    vec4 color = texture(integratedColorTexture, texCoord);
+    vec4 colorSquare = texture(integratedColorSquareTexture, texCoord);
+    vec4 gBuffer = texture(gBufferTexture, texCoord);
+
+    vec3 normal = (gBuffer.xyz - vec3(0.5, 0.5, 0.5)) * 2.0;
+    float depth = gBuffer.w;
+    vec2 grad = vec2(dFdx(depth), dFdy(depth));
+    
+    vec4 colorSum = vec4(0,0,0,0);
+    float weightSum = 0.0;
+    float varianceSum = 0.0;
+    float sampleConfidenceSum = 0.0;
+    float kernal[25] = float[](0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288, 
+      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
+      0.03391774626899505, 0.07180386941492609, 0.09219799334529226, 0.07180386941492609, 0.03391774626899505, 
+      0.02641516735431067, 0.05592090972790157, 0.07180386941492609, 0.05592090972790157, 0.02641516735431067, 
+      0.01247764154323288, 0.02641516735431067, 0.03391774626899505, 0.02641516735431067, 0.01247764154323288);
+    for (int i = 0; i < 5; ++i) {
+      for (int j = 0; j < 5; ++j) {
+        int index = i * 5 + j;
+
+        vec4 color2 = texture(integratedColorTexture, texCoord + vec2((1.0 / 512.0 * float((i - 2) * stepLength)), (1.0 / 512.0 * float((j - 2) * stepLength))));
+        vec4 colorSquare2 = texture(integratedColorSquareTexture, texCoord + vec2((1.0 / 512.0 * float((i - 2) * stepLength)), (1.0 / 512.0 * float((j - 2) * stepLength))));
+        vec4 gBuffer2 = texture(gBufferTexture, texCoord + vec2((1.0 / 512.0 * float((i - 2) * stepLength)), (1.0 / 512.0 * float((j - 2) * stepLength))));
+
+        vec4 varianceVec2 = vec4((colorSquare2 - color2 * color2).xyz, 0.0);
+        float variance2 = dot(varianceVec2, varianceVec2);
+        float sampleConfidence2 = colorSquare2.w;
+
+        vec3 normal2 = (gBuffer2.xyz - vec3(0.5, 0.5, 0.5)) * 2.0;
+        float depth2 = gBuffer2.w;
+
+        float weightNormal = pow(max(0.0, dot(normal, normal2)), 64.0);
+        float weightDepth = exp((-abs(depth - depth2)) / (abs(dot(grad, vec2(i-2, j-2))) + 0.01));
+        float weight = weightNormal * weightDepth * kernal[index];
+
+        weightSum += weight;
+        colorSum += weight * color2;
+        varianceSum += weight * variance2;
+        sampleConfidenceSum += weight * sampleConfidence2;
+      }
+    }
+    colorSum /= weightSum; 
+    varianceSum /= weightSum; 
+    sampleConfidenceSum /= weightSum; 
+
+    float variance = clamp(max(varianceSum * 50.0, 1.0 - sampleConfidenceSum), 0.2, 0.8);
+    fragColor = mix(color, colorSum, variance);
+
+    fragColor.w = 1.0;
 }`;
 
 
@@ -291,35 +324,10 @@ function makeMain() {
   return `void main() {
     vec3 newLight = light + uniformlyRandomVector(timeSinceStart - 53.0) * ${lightSize};
     vec2 texCoord = gl_FragCoord.xy / 512.0;
-    // vec4 lastColor = texture(colorTexture, texCoord).rgba;
-    // vec4 lastGBuffer = texture(gBufferTexture, texCoord).rgba;
-    // vec4 lastColorSquare = texture(colorSquareTexture, texCoord).rgba;
     vec3 color; vec3 normal; float depth;
     calculateColor(eye, initialRay, newLight, color, normal, depth);
-
-    // float deltaDepth = abs(lastGBuffer.w - depth);
-    // vec3 deltaNormal = normal - lastGBuffer.xyz;
-    // float dotDeltaNormal = dot(deltaNormal, deltaNormal);
-
-    // vec4 avgColor = vec4(0,0,0,1);
-    // for (int i = 0; i < 3; ++i) {
-    //   for (int j = 0; j < 3; ++j) {
-    //     avgColor += (1.0 / 9.0) * texture(colorTexture, texCoord + vec2((1.0 / 512.0 * float(i - 1)), (1.0 / 512.0 * float(j - 1))));
-    //   }
-    // }
-    // vec4 deltaColor = avgColor - lastColor;
-    // float dotDeltaColor = dot(deltaColor, deltaColor);
-
-    // if (deltaDepth < 0.01 && dotDeltaNormal < 0.1) {
-    //   //fragColor = vec4(1, 1, 1, 1.0);
-    //   fragColor = vec4(mix(color, lastColor.xyz, 0.8), 1.0);
-    //   colorSquare = vec4(mix(color * color, lastColorSquare.xyz, 0.8), 1.0);
-    // } else {
-      //fragColor = vec4(dotDeltaNormal,dotDeltaNormal,dotDeltaNormal, 1.0);
-      //fragColor = vec4(0,0,0, 1.0);
-      fragColor = vec4(color, 1.0);
-      colorSquare = vec4(color * color, 1.0);
-    // }
+    fragColor = vec4(color, 1.0);
+    colorSquare = vec4(color * color, 1.0);
     gBuffer = vec4(normal, depth);
 }`;
 }
@@ -336,13 +344,9 @@ function makeTracerFragmentSource(objects) {
   in vec3 initialRay;
   uniform float textureWeight;
   uniform float timeSinceStart;
-  // uniform sampler2D colorTexture;
-  // uniform sampler2D gBufferTexture; 
-  // uniform sampler2D colorSquareTexture;
   uniform float glossiness;
   vec3 roomCubeMin = vec3(-1.0, -1.0, -1.0);
   vec3 roomCubeMax = vec3(1.0, 1.0, 1.0);
-  
   ` + 
   // objects
   concat(objects, function(o){ return o.getGlobalCode(); }) + 
@@ -784,89 +788,59 @@ function PathTracer() {
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
 
   // create framebuffer
-  this.framebuffer = gl.createFramebuffer();
+  this.pathTracerFramebuffer = gl.createFramebuffer();
+  this.temporalDenoiserFramebuffer = gl.createFramebuffer();
+  this.spatialDenoiserFrameBuffer = gl.createFramebuffer();
 
   // create textures
   var type = gl.UNSIGNED_BYTE;
-  this.colorTextures = [];
-  for (var i = 0; i < 2; i++) {
-      this.colorTextures.push(gl.createTexture());
-    gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[i]);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
-  }
+  this.colorTextures = createPingPongTextures();                  // raw output of 1 spp path trace
+  this.gBufferTextures = createPingPongTextures();                // vec4(normal, depth)
+  this.integratedColorTextures = createPingPongTextures();        // temporally integrated color
+  this.integratedColorSquareTextures = createPingPongTextures();  // temporally integrated color*color for variance estimation
+  this.atrousTextures = createPingPongTextures();                 // a-trous wavelet filter iteration
 
-  // this.colorSquareTextures = [];
-  // for (var i = 0; i < 2; i++) {
-  //     this.colorSquareTextures.push(gl.createTexture());
-  //   gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[i]);
-  //   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  //   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  //   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
-  // }
-
-  this.gBufferTextures = [];
-  for (var i = 0; i < 2; i++) {
-    this.gBufferTextures.push(gl.createTexture());
-    gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[i]);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
-  }
-
-  this.integratedColorTextures = [];
-  for (var i = 0; i < 2; i++) {
-    this.integratedColorTextures.push(gl.createTexture());
-    gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[i]);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
-  }
-
-  this.integratedColorSquareTextures = [];
-  for (var i = 0; i < 2; i++) {
-    this.integratedColorSquareTextures.push(gl.createTexture());
-    gl.bindTexture(gl.TEXTURE_2D, this.integratedColorSquareTextures[i]);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, type, null);
-  }
-
-  gl.bindTexture(gl.TEXTURE_2D, null);
-
-  // create render shader
-  this.renderProgram = compileShader(renderVertexSource, renderFragmentSource);
-  this.renderVertexAttribute = gl.getAttribLocation(this.renderProgram, 'vertex');
+  // create temporal denoiser
+  this.temporalDenoiserProgram = compileShader(denoiserVertexSource, temporalDenoiserFragmentSource);
+  this.renderVertexAttribute = gl.getAttribLocation(this.temporalDenoiserProgram, 'vertex');
   gl.enableVertexAttribArray(this.renderVertexAttribute);
-  gl.useProgram(this.renderProgram);
-  const colorTextureLoc = gl.getUniformLocation(this.renderProgram, "colorTexture");
-  gl.uniform1i(colorTextureLoc, 0);
-  const gBufferTextureLoc = gl.getUniformLocation(this.renderProgram, "rawColorTexture");
-  gl.uniform1i(gBufferTextureLoc, 1);
-
-  // create denoiser shader
-  this.denoiserProgram = compileShader(renderVertexSource, denoiserFragmentSource);
-  this.renderVertexAttribute = gl.getAttribLocation(this.denoiserProgram, 'vertex');
+  setTexturesLoc(this.temporalDenoiserProgram, ['colorTexture', 'gBufferTexture', 'integratedColorTexture', 'integratedColorSquareTexture', 'lastGBufferTexture']);
+  
+  // create spatial denoiser
+  this.spatialDenoiserProgram = compileShader(denoiserVertexSource, spatialDenoiserFragmentSource);
+  this.renderVertexAttribute = gl.getAttribLocation(this.spatialDenoiserProgram, 'vertex');
   gl.enableVertexAttribArray(this.renderVertexAttribute);
-  gl.useProgram(this.denoiserProgram);
-  const denoiserColorTextureLoc = gl.getUniformLocation(this.denoiserProgram, "colorTexture");
-  gl.uniform1i(denoiserColorTextureLoc, 0);
-  const denoiserGBufferTextureLoc = gl.getUniformLocation(this.denoiserProgram, "gBufferTexture");
-  gl.uniform1i(denoiserGBufferTextureLoc, 1);
-  const denoiserIntegratedColorTextureLoc = gl.getUniformLocation(this.denoiserProgram, "integratedColorTexture");
-  gl.uniform1i(denoiserIntegratedColorTextureLoc, 2);
-  const denoiserIntegratedColorSquareTextureLoc = gl.getUniformLocation(this.denoiserProgram, "integratedColorSquareTexture");
-  gl.uniform1i(denoiserIntegratedColorSquareTextureLoc, 3);
-  const denoiserLastGBufferTextureLoc = gl.getUniformLocation(this.denoiserProgram, "lastGBufferTexture");
-  gl.uniform1i(denoiserLastGBufferTextureLoc, 4);
-
+  setTexturesLoc(this.spatialDenoiserProgram, ['integratedColorTexture', 'gBufferTexture', 'integratedColorSquareTexture']);
+  this.spatialDenoiserProgram.stepLengthLoc = gl.getUniformLocation(this.spatialDenoiserProgram, 'stepLength');
 
   // objects and shader will be filled in when setObjects() is called
   this.objects = [];
   this.sampleCount = 0;
   this.sampleIndex = 0;
   this.tracerProgram = null;
+  
+  // create 2 textures for input and output. they are swapped at each render.
+  function createPingPongTextures() {
+    const textures = [];
+    for (let i = 0; i < 2; i++) {
+        textures.push(gl.createTexture());
+      gl.bindTexture(gl.TEXTURE_2D, textures[i]);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return textures;
+  }
+
+  // set uniform location of textures in sequence
+  function setTexturesLoc(program, textures) {
+    gl.useProgram(program);
+    textures.forEach( (name, i) => {
+      const textureLoc = gl.getUniformLocation(program, name);
+      gl.uniform1i(textureLoc, i);
+    });
+  }
 }
 
 PathTracer.prototype.setObjects = function(objects) {
@@ -881,18 +855,15 @@ PathTracer.prototype.setObjects = function(objects) {
   this.tracerProgram = compileShader(tracerVertexSource, makeTracerFragmentSource(objects));
   this.tracerVertexAttribute = gl.getAttribLocation(this.tracerProgram, 'vertex');
   gl.enableVertexAttribArray(this.tracerVertexAttribute);
-  
-  // gl.useProgram(this.tracerProgram);
-  // const colorTextureLoc = gl.getUniformLocation(this.tracerProgram, "colorTexture");
-  // gl.uniform1i(colorTextureLoc, 0);
-  // const gBufferTextureLoc = gl.getUniformLocation(this.tracerProgram, "gBufferTexture");
-  // gl.uniform1i(gBufferTextureLoc, 1);
-  // const colorSquareTextureLoc = gl.getUniformLocation(this.tracerProgram, "colorSquareTexture");
-  // gl.uniform1i(colorSquareTextureLoc, 2);
 };
 
+
+// path tracing
 PathTracer.prototype.update = function(matrix, timeSinceStart) {
-  // calculate uniforms
+
+  gl.useProgram(this.tracerProgram);
+
+  // calculate and set uniforms
   for(var i = 0; i < this.objects.length; i++) {
     this.objects[i].setUniforms(this);
   }
@@ -903,99 +874,143 @@ PathTracer.prototype.update = function(matrix, timeSinceStart) {
   this.uniforms.ray10 = getEyeRay(matrix, +1, -1);
   this.uniforms.ray11 = getEyeRay(matrix, +1, +1);
   this.uniforms.timeSinceStart = timeSinceStart;
-
-  // set uniforms
-  gl.useProgram(this.tracerProgram);
   setUniforms(this.tracerProgram, this.uniforms);
   
-  // // bind texture
-  // gl.activeTexture(gl.TEXTURE0);
-  // gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[0]);
-  
-  // gl.activeTexture(gl.TEXTURE1);
-  // gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
+  // bind framebuffer
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
 
-  // gl.activeTexture(gl.TEXTURE2);
-  // gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[0]);
-  
-  // render to texture
+  // swap ping-pong textures before rendering
   this.colorTextures.reverse();
   this.gBufferTextures.reverse();
-  // this.colorSquareTextures.reverse();
   this.integratedColorTextures.reverse();
   this.integratedColorSquareTextures.reverse();
+  this.atrousTextures.reverse();
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
-
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.colorTextures[0], 0);  // path tracing result
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.gBufferTextures[0], 0);  // normal and depth
-  // gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, this.colorSquareTextures[0], 0);  // color^2
+  // render to textures
+  gl.bindFramebuffer(gl.FRAMEBUFFER, this.pathTracerFramebuffer);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.colorTextures[0], 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.gBufferTextures[0], 0);
   gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-  // gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
-
+  
+  // bind vertex buffer
   gl.vertexAttribPointer(this.tracerVertexAttribute, 2, gl.FLOAT, false, 0, 0);
+
+  // render
+  if (denoiseMode == 2) {   // denoiser off, just render to canvas
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 };
 
+
+// temporal and spatial denoise
 PathTracer.prototype.render = function() {
-  // denoise program
-  gl.useProgram(this.denoiserProgram);
-
-  // bind texture
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[0]);
   
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[0]);
-  
-  gl.activeTexture(gl.TEXTURE2);
-  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[0]);
-  
-  gl.activeTexture(gl.TEXTURE3);
-  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorSquareTextures[0]);
+  if (denoiseMode == 2) {   // denoiser off
+    return;
+  }
 
-  gl.activeTexture(gl.TEXTURE4);
-  gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[1]);
+  //////////////////////// temporal denoiser ///////////////////////////////////
+  
+  gl.useProgram(this.temporalDenoiserProgram);
 
-  // render to texture
-  gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+  // bind textures
+  bindTextures([
+    this.colorTextures[0],
+    this.gBufferTextures[0],
+    this.integratedColorTextures[0],
+    this.integratedColorSquareTextures[0],
+    this.gBufferTextures[1],
+  ]);
+
+  // bind framebuffer and attach textures to it for output
+  
+  gl.bindFramebuffer(gl.FRAMEBUFFER, this.temporalDenoiserFramebuffer);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.integratedColorTextures[1], 0);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.integratedColorSquareTextures[1], 0);
   gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
   
+  // bind vertex buffer
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+  gl.vertexAttribPointer(this.renderVertexAttribute, 2, gl.FLOAT, false, 0, 0);
+  
+  // render
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  
+  if (denoiseMode == 1) {   // denoiser off
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    return;    
+  }
+
+  //////////////////////// spatial denoiser ///////////////////////////////////
+
+  gl.useProgram(this.spatialDenoiserProgram);
+  gl.uniform1i(this.spatialDenoiserProgram.stepLengthLoc, 1.0);
+
+  // bind textures
+  bindTextures([
+    this.integratedColorTextures[1],
+    this.gBufferTextures[0],
+    this.integratedColorSquareTextures[1],
+  ]);
+
+  // bind framebuffer, vertex buffer, and render
+  gl.bindFramebuffer(gl.FRAMEBUFFER, this.spatialDenoiserFrameBuffer);
+  // gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.integratedColorTextures[0], 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.atrousTextures[0], 0);
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.vertexAttribPointer(this.renderVertexAttribute, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  // /////////////////////// second pass ///////////////////////////////////////
+
+  gl.useProgram(this.spatialDenoiserProgram);
+  gl.uniform1i(this.spatialDenoiserProgram.stepLengthLoc, 2.0);
+
+  // bind textures
+  bindTextures([
+    this.atrousTextures[0],
+    this.gBufferTextures[0],
+    this.integratedColorSquareTextures[1],
+  ]);
+
+  // bind framebuffer, vertex buffer, and render
+  gl.bindFramebuffer(gl.FRAMEBUFFER, this.spatialDenoiserFrameBuffer);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.atrousTextures[1], 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+  gl.vertexAttribPointer(this.renderVertexAttribute, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  ///////////////////////// third pass /////////////////////////////////////////
+
+  gl.useProgram(this.spatialDenoiserProgram);
+  gl.uniform1i(this.spatialDenoiserProgram.stepLengthLoc, 4.0);
+
+  // bind textures
+  bindTextures([
+    // this.integratedColorTextures[1],
+    this.atrousTextures[1],
+    this.gBufferTextures[0],
+    this.integratedColorSquareTextures[1],
+  ]);
+
+  // bind framebuffer, vertex buffer, and render
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-  // render program
-  gl.useProgram(this.renderProgram);
-
-  // bind texture
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.integratedColorTextures[1]);
-  
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[0]);
-
-  // gl.activeTexture(gl.TEXTURE2);
-  // gl.bindTexture(gl.TEXTURE_2D, this.colorSquareTextures[0]);
-
-  // gl.activeTexture(gl.TEXTURE2);
-  // gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[1]);
-
-  // gl.activeTexture(gl.TEXTURE3);
-  // gl.bindTexture(gl.TEXTURE_2D, this.gBufferTextures[1]);
-
-  // gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
-  
   gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
   gl.vertexAttribPointer(this.renderVertexAttribute, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  // bind textures in sequence
+  function bindTextures(textures) {
+    textures.forEach((texture, i) => {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+    });
+  }
 };
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // class Renderer
@@ -1045,7 +1060,8 @@ Renderer.prototype.setObjects = function(objects) {
 };
 
 Renderer.prototype.update = function(modelviewProjection, timeSinceStart) {
-  var jitter = Matrix.Translation(Vector.create([Math.random() * 2 - 1, Math.random() * 2 - 1, 0]).multiply(1 / 512));
+  const TAA = false;
+  var jitter = Matrix.Translation(Vector.create( (TAA)? [Math.random() * 1 - 0.5, Math.random() * 1 - 0.5, 0] : [0, 0, 0]).multiply(1 / 512));
   var inverse = jitter.multiply(modelviewProjection).inverse();
   this.modelviewProjection = modelviewProjection;
   this.pathTracer.update(inverse, timeSinceStart);
@@ -1216,6 +1232,13 @@ UI.prototype.updateGlossiness = function() {
   glossiness = newGlossiness;
 };
 
+UI.prototype.updateDenoiseMode = function() {
+  var newDenoiseMode = parseInt(document.getElementById('denoise').value, 10);
+  if(denoiseMode != newDenoiseMode) {
+    denoiseMode = newDenoiseMode;
+  }
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 // main program
 ////////////////////////////////////////////////////////////////////////////////
@@ -1239,6 +1262,7 @@ var MATERIAL_MIRROR = 1;
 var MATERIAL_GLOSSY = 2;
 var material = MATERIAL_DIFFUSE;
 var glossiness = 0.6;
+var denoiseMode = 0
 
 var YELLOW_BLUE_CORNELL_BOX = 0;
 var RED_GREEN_CORNELL_BOX = 1;
@@ -1254,6 +1278,7 @@ function tick(timeSinceStart) {
   ui.updateMaterial();
   ui.updateGlossiness();
   ui.updateEnvironment();
+  ui.updateDenoiseMode();
   ui.update(timeSinceStart);
   ui.render();
 }
@@ -1430,7 +1455,7 @@ window.onload = function() {
       stats.begin(); 
       tick((new Date() - start) * 0.001); 
       stats.end();
-    }, 1000 / 60);
+    }, 1000 / 0.5);
   } else {
     error.innerHTML = 'Your browser does not support WebGL.<br>Please see <a href="http://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">Getting a WebGL Implementation</a>.';
   }
